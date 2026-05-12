@@ -1755,6 +1755,56 @@ impl WgpuRenderer {
         self.resources.take();
     }
 
+    #[cfg(not(target_family = "wasm"))]
+    pub fn replace_surface<W>(
+        &mut self,
+        window: &W,
+        config: WgpuSurfaceConfig,
+        instance: &wgpu::Instance,
+    ) -> anyhow::Result<()>
+    where
+        W: HasWindowHandle + HasDisplayHandle + std::fmt::Debug + Send + Sync + Clone + 'static,
+    {
+        let window_handle = window
+            .window_handle()
+            .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
+        let display_handle = window
+            .display_handle()
+            .map_err(|e| anyhow::anyhow!("Failed to get display handle: {e}"))?;
+
+        let surface = create_surface(instance, display_handle.as_raw(), window_handle.as_raw())?;
+        let gpu_context = self
+            .context
+            .as_ref()
+            .map(Rc::clone)
+            .ok_or_else(|| anyhow::anyhow!("replace_surface requires gpu_context"))?;
+        let atlas = Arc::clone(&self.atlas);
+        let compositor_gpu = self.compositor_gpu;
+
+        self.resources.take();
+
+        let context_ref = gpu_context.borrow();
+        let context = context_ref
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("gpu_context missing during surface replacement"))?;
+        context.check_compatible_with_surface(&surface)?;
+
+        *self = Self::new_internal(
+            Some(Rc::clone(&gpu_context)),
+            context,
+            surface,
+            config,
+            compositor_gpu,
+            atlas,
+        )?;
+
+        Ok(())
+    }
+
+    pub fn unconfigure_surface(&mut self) {
+        self.resources.take();
+    }
+
     /// Returns true if the GPU device was lost and recovery is needed.
     pub fn device_lost(&self) -> bool {
         self.device_lost.load(std::sync::atomic::Ordering::SeqCst)
