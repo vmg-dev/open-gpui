@@ -132,14 +132,76 @@ impl WgpuContext {
             );
         }
 
+        let adapter_limits = adapter.limits();
+        let mut required_limits = wgpu::Limits::downlevel_defaults()
+            .using_resolution(adapter_limits.clone())
+            .using_alignment(adapter_limits.clone());
+
+        let compute_limits = [
+            (
+                required_limits.max_compute_workgroup_storage_size,
+                adapter_limits.max_compute_workgroup_storage_size,
+            ),
+            (
+                required_limits.max_compute_invocations_per_workgroup,
+                adapter_limits.max_compute_invocations_per_workgroup,
+            ),
+            (
+                required_limits.max_compute_workgroup_size_x,
+                adapter_limits.max_compute_workgroup_size_x,
+            ),
+            (
+                required_limits.max_compute_workgroup_size_y,
+                adapter_limits.max_compute_workgroup_size_y,
+            ),
+            (
+                required_limits.max_compute_workgroup_size_z,
+                adapter_limits.max_compute_workgroup_size_z,
+            ),
+            (
+                required_limits.max_compute_workgroups_per_dimension,
+                adapter_limits.max_compute_workgroups_per_dimension,
+            ),
+        ];
+        let relaxed_compute_limits = compute_limits
+            .iter()
+            .any(|(required, supported)| required > supported);
+
+        required_limits.max_compute_workgroup_storage_size = required_limits
+            .max_compute_workgroup_storage_size
+            .min(adapter_limits.max_compute_workgroup_storage_size);
+        required_limits.max_compute_invocations_per_workgroup = required_limits
+            .max_compute_invocations_per_workgroup
+            .min(adapter_limits.max_compute_invocations_per_workgroup);
+        required_limits.max_compute_workgroup_size_x = required_limits
+            .max_compute_workgroup_size_x
+            .min(adapter_limits.max_compute_workgroup_size_x);
+        required_limits.max_compute_workgroup_size_y = required_limits
+            .max_compute_workgroup_size_y
+            .min(adapter_limits.max_compute_workgroup_size_y);
+        required_limits.max_compute_workgroup_size_z = required_limits
+            .max_compute_workgroup_size_z
+            .min(adapter_limits.max_compute_workgroup_size_z);
+        required_limits.max_compute_workgroups_per_dimension = required_limits
+            .max_compute_workgroups_per_dimension
+            .min(adapter_limits.max_compute_workgroups_per_dimension);
+
+        if relaxed_compute_limits {
+            let info = adapter.get_info();
+            log::info!(
+                "Adapter {} ({:?}) does not expose the default compute limits; \
+                requesting render-only compute limits",
+                info.name,
+                info.backend
+            );
+        }
+
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("gpui_device"),
                     required_features,
-                    required_limits: wgpu::Limits::downlevel_defaults()
-                        .using_resolution(adapter.limits())
-                        .using_alignment(adapter.limits()),
+                    required_limits,
                     memory_hints: wgpu::MemoryHints::MemoryUsage,
                 },
                 None,
