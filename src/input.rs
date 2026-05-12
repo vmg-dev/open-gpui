@@ -108,6 +108,10 @@ impl<V: 'static> ElementInputHandler<V> {
 }
 
 impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
+    fn bounds(&mut self, _window: &mut Window, _cx: &mut App) -> Option<Bounds<Pixels>> {
+        Some(self.element_bounds)
+    }
+
     fn selected_text_range(
         &mut self,
         ignore_disabled_input: bool,
