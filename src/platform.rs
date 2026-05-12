@@ -1122,6 +1122,15 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    pub fn set_selected_text_range(&mut self, range_utf16: Range<usize>, reversed: bool) {
+        self.cx
+            .update(|window, cx| {
+                self.handler
+                    .set_selected_text_range(range_utf16, reversed, window, cx);
+            })
+            .ok();
+    }
+
     #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn marked_text_range(&mut self) -> Option<Range<usize>> {
         self.cx
@@ -1260,6 +1269,20 @@ pub trait InputHandler: 'static {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<UTF16Selection>;
+
+    /// Set the selected text range in UTF-16 document offsets.
+    ///
+    /// This is required by native IME APIs, which can move selection
+    /// independently from text replacement while composing text.
+    fn set_selected_text_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        reversed: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let _ = (range_utf16, reversed, window, cx);
+    }
 
     /// Get the range of the currently marked text, if any
     /// Corresponds to [markedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438250-markedrange)
