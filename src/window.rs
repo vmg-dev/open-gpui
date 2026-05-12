@@ -2273,6 +2273,10 @@ impl Window {
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
+        // Hitboxes are frame-local targets. Keep their ids deterministic across
+        // redraws so cached pointer hit-test paths can continue to dispatch
+        // move/up/cancel events to the original down targets.
+        self.next_hitbox_id = HitboxId(0);
 
         // Restore the previously-used input handler.
         if let Some(input_handler) = self.platform_window.take_input_handler() {
