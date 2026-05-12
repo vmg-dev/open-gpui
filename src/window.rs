@@ -3744,6 +3744,7 @@ impl Window {
         target_os = "freebsd",
         target_os = "macos",
         target_os = "ios",
+        target_os = "android",
         target_family = "wasm"
     ))]
     pub fn paint_wgpu_texture(
@@ -3759,6 +3760,7 @@ impl Window {
         target_os = "freebsd",
         target_os = "macos",
         target_os = "ios",
+        target_os = "android",
         target_family = "wasm"
     ))]
     /// Paint a wgpu texture with explicit alpha compositing behavior.
@@ -5182,6 +5184,7 @@ impl Window {
         target_os = "freebsd",
         target_os = "macos",
         target_os = "ios",
+        target_os = "android",
         target_family = "wasm"
     ))]
     pub fn wgpu_device_queue(&self) -> Option<crate::WgpuDeviceQueue> {
