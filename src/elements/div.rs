@@ -23,9 +23,9 @@ use crate::{
     Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext,
     KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent,
     MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
-    Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
-    size,
+    Overflow, ParentElement, Pixels, Point, PointerEvent, PointerPhase, Render, ScrollWheelEvent,
+    SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId, Visibility, Window,
+    WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -301,6 +301,114 @@ impl Interactivity {
         self.mouse_move_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                    (listener)(event, window, cx);
+                }
+            }));
+    }
+
+    /// Bind the given callback to pointer events during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_pointer_event`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_pointer_event(
+        &mut self,
+        listener: impl Fn(&PointerEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.pointer_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Bubble && hitbox.should_handle_pointer(event, window) {
+                    (listener)(event, window, cx);
+                }
+            }));
+    }
+
+    /// Bind the given callback to pointer events during the capture phase.
+    /// The imperative API equivalent to [`InteractiveElement::capture_pointer_event`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn capture_pointer_event(
+        &mut self,
+        listener: impl Fn(&PointerEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.pointer_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Capture && hitbox.should_handle_pointer(event, window) {
+                    (listener)(event, window, cx);
+                }
+            }));
+    }
+
+    /// Bind the given callback to pointer down events during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_pointer_down`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_pointer_down(
+        &mut self,
+        listener: impl Fn(&PointerEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.pointer_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Bubble
+                    && event.phase == PointerPhase::Down
+                    && hitbox.should_handle_pointer(event, window)
+                {
+                    (listener)(event, window, cx);
+                }
+            }));
+    }
+
+    /// Bind the given callback to pointer move events during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_pointer_move`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_pointer_move(
+        &mut self,
+        listener: impl Fn(&PointerEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.pointer_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Bubble
+                    && event.phase == PointerPhase::Move
+                    && hitbox.should_handle_pointer(event, window)
+                {
+                    (listener)(event, window, cx);
+                }
+            }));
+    }
+
+    /// Bind the given callback to pointer up events during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_pointer_up`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_pointer_up(
+        &mut self,
+        listener: impl Fn(&PointerEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.pointer_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Bubble
+                    && event.phase == PointerPhase::Up
+                    && hitbox.should_handle_pointer(event, window)
+                {
+                    (listener)(event, window, cx);
+                }
+            }));
+    }
+
+    /// Bind the given callback to pointer cancel events during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_pointer_cancel`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_pointer_cancel(
+        &mut self,
+        listener: impl Fn(&PointerEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.pointer_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Bubble
+                    && event.phase == PointerPhase::Cancel
+                    && hitbox.should_handle_pointer(event, window)
+                {
                     (listener)(event, window, cx);
                 }
             }));
@@ -927,6 +1035,78 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Bind the given callback to pointer events during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_pointer_event`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to the view state from this callback.
+    fn on_pointer_event(
+        mut self,
+        listener: impl Fn(&PointerEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().on_pointer_event(listener);
+        self
+    }
+
+    /// Bind the given callback to pointer events during the capture phase.
+    /// The fluent API equivalent to [`Interactivity::capture_pointer_event`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to the view state from this callback.
+    fn capture_pointer_event(
+        mut self,
+        listener: impl Fn(&PointerEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().capture_pointer_event(listener);
+        self
+    }
+
+    /// Bind the given callback to pointer down events during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_pointer_down`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to the view state from this callback.
+    fn on_pointer_down(
+        mut self,
+        listener: impl Fn(&PointerEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().on_pointer_down(listener);
+        self
+    }
+
+    /// Bind the given callback to pointer move events during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_pointer_move`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to the view state from this callback.
+    fn on_pointer_move(
+        mut self,
+        listener: impl Fn(&PointerEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().on_pointer_move(listener);
+        self
+    }
+
+    /// Bind the given callback to pointer up events during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_pointer_up`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to the view state from this callback.
+    fn on_pointer_up(
+        mut self,
+        listener: impl Fn(&PointerEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().on_pointer_up(listener);
+        self
+    }
+
+    /// Bind the given callback to pointer cancel events during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_pointer_cancel`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to the view state from this callback.
+    fn on_pointer_cancel(
+        mut self,
+        listener: impl Fn(&PointerEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().on_pointer_cancel(listener);
+        self
+    }
+
     /// Bind the given callback to the mouse drag event of the given type. Note that this
     /// will be called for all move events, inside or outside of this element, as long as the
     /// drag was started with this element under the mouse. Useful for implementing draggable
@@ -1364,6 +1544,9 @@ pub(crate) type MousePressureListener =
 pub(crate) type MouseMoveListener =
     Box<dyn Fn(&MouseMoveEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
+pub(crate) type PointerListener =
+    Box<dyn Fn(&PointerEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+
 pub(crate) type ScrollWheelListener =
     Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
@@ -1724,6 +1907,7 @@ pub struct Interactivity {
     pub(crate) mouse_up_listeners: Vec<MouseUpListener>,
     pub(crate) mouse_pressure_listeners: Vec<MousePressureListener>,
     pub(crate) mouse_move_listeners: Vec<MouseMoveListener>,
+    pub(crate) pointer_listeners: Vec<PointerListener>,
     pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) pinch_listeners: Vec<PinchListener>,
@@ -1927,6 +2111,7 @@ impl Interactivity {
             || !self.mouse_pressure_listeners.is_empty()
             || !self.mouse_down_listeners.is_empty()
             || !self.mouse_move_listeners.is_empty()
+            || !self.pointer_listeners.is_empty()
             || !self.click_listeners.is_empty()
             || !self.aux_click_listeners.is_empty()
             || !self.scroll_wheel_listeners.is_empty()
@@ -2286,6 +2471,13 @@ impl Interactivity {
         for listener in self.mouse_move_listeners.drain(..) {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                listener(event, phase, &hitbox, window, cx);
+            })
+        }
+
+        for listener in self.pointer_listeners.drain(..) {
+            let hitbox = hitbox.clone();
+            window.on_pointer_event(move |event: &PointerEvent, phase, window, cx| {
                 listener(event, phase, &hitbox, window, cx);
             })
         }

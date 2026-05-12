@@ -10,6 +10,14 @@ mod surface;
 mod svg;
 mod text;
 mod uniform_list;
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "macos",
+    target_os = "ios",
+    target_family = "wasm"
+))]
+mod wgpu_texture;
 
 pub use anchored::*;
 pub use animation::*;
@@ -23,3 +31,11 @@ pub use surface::*;
 pub use svg::*;
 pub use text::*;
 pub use uniform_list::*;
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "macos",
+    target_os = "ios",
+    target_family = "wasm"
+))]
+pub use wgpu_texture::*;

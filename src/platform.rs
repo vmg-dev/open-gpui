@@ -11,8 +11,15 @@ pub(crate) mod linux;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_family = "wasm"))]
-pub(crate) mod wgpu;
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "macos",
+    target_os = "ios",
+    target_family = "wasm"
+))]
+#[allow(missing_docs)]
+pub mod wgpu;
 
 #[cfg(target_family = "wasm")]
 pub(crate) mod web;
@@ -84,6 +91,20 @@ pub use app_menu::*;
 pub use keyboard::*;
 pub use keystroke::*;
 
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "macos",
+    target_os = "ios",
+    target_family = "wasm"
+))]
+#[derive(Clone)]
+#[expect(missing_docs)]
+pub struct WgpuDeviceQueue {
+    pub device: Arc<::wgpu::Device>,
+    pub queue: Arc<::wgpu::Queue>,
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 
@@ -122,6 +143,12 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
     {
         let _ = headless;
         Rc::new(web::WebPlatform::new(true))
+    }
+
+    #[cfg(target_os = "ios")]
+    {
+        let _ = headless;
+        panic!("gpui::current_platform is not available on iOS; use gpui-mobile's platform")
     }
 }
 
@@ -629,6 +656,16 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos",
+        target_os = "ios",
+        target_family = "wasm"
+    ))]
+    fn wgpu_device_queue(&self) -> Option<WgpuDeviceQueue> {
+        None
+    }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 

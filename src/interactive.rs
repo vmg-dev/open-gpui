@@ -1,9 +1,9 @@
 use crate::{
     Bounds, Capslock, Context, Empty, IntoElement, Keystroke, Modifiers, Pixels, Point, Render,
-    Window, point, seal::Sealed,
+    Window, point, px, seal::Sealed,
 };
 use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
+use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf, time::Duration};
 
 /// An event from a platform input source.
 pub trait InputEvent: Sealed + 'static {
@@ -16,6 +16,9 @@ pub trait KeyEvent: InputEvent {}
 
 /// A mouse event from the platform.
 pub trait MouseEvent: InputEvent {}
+
+/// A pointer event from the platform.
+pub trait PointerInputEvent: InputEvent {}
 
 /// A gesture event from the platform.
 pub trait GestureEvent: InputEvent {}
@@ -94,6 +97,230 @@ pub enum TouchPhase {
     /// The touch phase has ended
     Ended,
 }
+
+/// The primary pointer button.
+pub const PRIMARY_BUTTON: u32 = 1 << 0;
+/// The secondary pointer button.
+pub const SECONDARY_BUTTON: u32 = 1 << 1;
+/// The tertiary pointer button.
+pub const TERTIARY_BUTTON: u32 = 1 << 2;
+/// The back pointer button.
+pub const BACK_BUTTON: u32 = 1 << 3;
+/// The forward pointer button.
+pub const FORWARD_BUTTON: u32 = 1 << 4;
+
+/// A stable identifier for an active pointer sequence.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct PointerId(u64);
+
+impl PointerId {
+    /// Construct a pointer id from a platform identifier.
+    pub fn new(id: u64) -> Self {
+        Self(id)
+    }
+
+    /// Return the raw platform identifier.
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+/// A stable identifier for a physical pointer-capable device.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct PointerDeviceId(u64);
+
+impl PointerDeviceId {
+    /// Construct a pointer device id from a platform identifier.
+    pub fn new(id: u64) -> Self {
+        Self(id)
+    }
+
+    /// Return the raw platform identifier.
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+/// A stable identifier for the platform view that produced a pointer event.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct PointerViewId(u64);
+
+impl PointerViewId {
+    /// Construct a pointer view id from a platform identifier.
+    pub fn new(id: u64) -> Self {
+        Self(id)
+    }
+
+    /// Return the raw platform identifier.
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+/// The kind of platform device that produced a pointer event.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub enum PointerDeviceKind {
+    /// A traditional mouse pointer.
+    #[default]
+    Mouse,
+    /// A direct touch pointer.
+    Touch,
+    /// A stylus pointer.
+    Stylus,
+    /// The inverted end of a stylus pointer.
+    InvertedStylus,
+    /// A trackpad pan-zoom pointer stream.
+    Trackpad,
+    /// An unknown pointer device.
+    Unknown,
+}
+
+/// The lifecycle phase of a pointer event.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub enum PointerPhase {
+    /// A pointer became available to the view.
+    Added,
+    /// A pointer is hovering without an active down sequence.
+    #[default]
+    Hover,
+    /// A pointer started an active down sequence.
+    Down,
+    /// A pointer moved during an active sequence.
+    Move,
+    /// A pointer ended an active sequence normally.
+    Up,
+    /// A pointer sequence was cancelled.
+    Cancel,
+    /// A pointer left the view.
+    Removed,
+    /// A trackpad pan-zoom sequence started.
+    PanZoomStart,
+    /// A trackpad pan-zoom sequence updated.
+    PanZoomUpdate,
+    /// A trackpad pan-zoom sequence ended.
+    PanZoomEnd,
+}
+
+/// A pointer event from a platform input device.
+#[derive(Clone, Debug)]
+pub struct PointerEvent {
+    /// The platform view that produced the event.
+    pub view_id: PointerViewId,
+    /// Platform-specific event data for embedders.
+    pub embedder_id: u64,
+    /// The time at which the platform produced the event.
+    pub time_stamp: Duration,
+    /// The pointer sequence identifier.
+    pub pointer: PointerId,
+    /// The type of device that produced this event.
+    pub kind: PointerDeviceKind,
+    /// The physical device identifier.
+    pub device: PointerDeviceId,
+    /// The pointer lifecycle phase.
+    pub phase: PointerPhase,
+    /// The position of the pointer in window coordinates.
+    pub position: Point<Pixels>,
+    /// The movement since the previous event for this pointer.
+    pub delta: Point<Pixels>,
+    /// The pressed buttons bitfield.
+    pub buttons: u32,
+    /// Whether this pointer is currently down.
+    pub down: bool,
+    /// The normalized pressure of the pointer.
+    pub pressure: f32,
+    /// The minimum pressure value reported by the platform.
+    pub pressure_min: f32,
+    /// The maximum pressure value reported by the platform.
+    pub pressure_max: f32,
+    /// The distance of a hovering pointer from the screen.
+    pub distance: f32,
+    /// The maximum distance a hovering pointer can report.
+    pub distance_max: f32,
+    /// The approximate contact size.
+    pub size: f32,
+    /// The major radius of the contact ellipse.
+    pub radius_major: f32,
+    /// The minor radius of the contact ellipse.
+    pub radius_minor: f32,
+    /// The minimum radius value reported by the platform.
+    pub radius_min: f32,
+    /// The maximum radius value reported by the platform.
+    pub radius_max: f32,
+    /// The contact orientation in radians.
+    pub orientation: f32,
+    /// The stylus tilt in radians.
+    pub tilt: f32,
+    /// Platform-specific data associated with the event.
+    pub platform_data: u64,
+    /// Whether this event was synthesized rather than delivered directly by the platform.
+    pub synthesized: bool,
+    /// The modifiers that were held down when this pointer event occurred.
+    pub modifiers: Modifiers,
+}
+
+impl PointerEvent {
+    /// Construct a pointer event with default extended platform fields.
+    pub fn new(
+        pointer: PointerId,
+        kind: PointerDeviceKind,
+        phase: PointerPhase,
+        position: Point<Pixels>,
+        modifiers: Modifiers,
+    ) -> Self {
+        let down = matches!(
+            phase,
+            PointerPhase::Down | PointerPhase::Move | PointerPhase::PanZoomUpdate
+        );
+        Self {
+            view_id: PointerViewId::default(),
+            embedder_id: 0,
+            time_stamp: Duration::default(),
+            pointer,
+            kind,
+            device: PointerDeviceId::default(),
+            phase,
+            position,
+            delta: point(px(0.), px(0.)),
+            buttons: if down { PRIMARY_BUTTON } else { 0 },
+            down,
+            pressure: if down { 1. } else { 0. },
+            pressure_min: 0.,
+            pressure_max: 1.,
+            distance: 0.,
+            distance_max: 0.,
+            size: 0.,
+            radius_major: 0.,
+            radius_minor: 0.,
+            radius_min: 0.,
+            radius_max: 0.,
+            orientation: 0.,
+            tilt: 0.,
+            platform_data: 0,
+            synthesized: false,
+            modifiers,
+        }
+    }
+}
+
+impl Default for PointerEvent {
+    fn default() -> Self {
+        PointerEvent::new(
+            PointerId::default(),
+            PointerDeviceKind::default(),
+            PointerPhase::default(),
+            point(px(0.), px(0.)),
+            Modifiers::default(),
+        )
+    }
+}
+
+impl Sealed for PointerEvent {}
+impl InputEvent for PointerEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::Pointer(self)
+    }
+}
+impl PointerInputEvent for PointerEvent {}
 
 /// A mouse down event from the platform
 #[derive(Clone, Debug, Default)]
@@ -674,6 +901,8 @@ pub enum PlatformInput {
     MouseExited(MouseExitEvent),
     /// The scroll wheel was used.
     ScrollWheel(ScrollWheelEvent),
+    /// A platform pointer event was received.
+    Pointer(PointerEvent),
     /// A pinch gesture was performed.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     Pinch(PinchEvent),
@@ -693,6 +922,7 @@ impl PlatformInput {
             PlatformInput::MousePressure(event) => Some(event),
             PlatformInput::MouseExited(event) => Some(event),
             PlatformInput::ScrollWheel(event) => Some(event),
+            PlatformInput::Pointer(_) => None,
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             PlatformInput::Pinch(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
@@ -710,9 +940,28 @@ impl PlatformInput {
             PlatformInput::MousePressure(_) => None,
             PlatformInput::MouseExited(_) => None,
             PlatformInput::ScrollWheel(_) => None,
+            PlatformInput::Pointer(_) => None,
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             PlatformInput::Pinch(_) => None,
             PlatformInput::FileDrop(_) => None,
+        }
+    }
+
+    pub(crate) fn pointer_event(&self) -> Option<&dyn Any> {
+        match self {
+            PlatformInput::Pointer(event) => Some(event),
+            PlatformInput::KeyDown(_)
+            | PlatformInput::KeyUp(_)
+            | PlatformInput::ModifiersChanged(_)
+            | PlatformInput::MouseDown(_)
+            | PlatformInput::MouseUp(_)
+            | PlatformInput::MouseMove(_)
+            | PlatformInput::MousePressure(_)
+            | PlatformInput::MouseExited(_)
+            | PlatformInput::ScrollWheel(_)
+            | PlatformInput::FileDrop(_) => None,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            PlatformInput::Pinch(_) => None,
         }
     }
 }

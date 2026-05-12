@@ -117,9 +117,10 @@ impl WgpuContext {
     async fn create_device(
         adapter: &wgpu::Adapter,
     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
-        let dual_source_blending = adapter
-            .features()
-            .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
+        // wgpu 24 exposes DUAL_SOURCE_BLENDING on some adapters, but Naga still
+        // rejects the `enable dual_source_blending` WGSL extension. Leave the
+        // feature disabled until the shader compiler accepts it.
+        let dual_source_blending = false;
 
         let mut required_features = wgpu::Features::empty();
         if dual_source_blending {
@@ -132,16 +133,17 @@ impl WgpuContext {
         }
 
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("gpui_device"),
-                required_features,
-                required_limits: wgpu::Limits::downlevel_defaults()
-                    .using_resolution(adapter.limits())
-                    .using_alignment(adapter.limits()),
-                memory_hints: wgpu::MemoryHints::MemoryUsage,
-                trace: wgpu::Trace::Off,
-                experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            })
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("gpui_device"),
+                    required_features,
+                    required_limits: wgpu::Limits::downlevel_defaults()
+                        .using_resolution(adapter.limits())
+                        .using_alignment(adapter.limits()),
+                    memory_hints: wgpu::MemoryHints::MemoryUsage,
+                },
+                None,
+            )
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?;
 
@@ -149,13 +151,11 @@ impl WgpuContext {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn instance(display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>) -> wgpu::Instance {
-        wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
+    pub fn instance(_display: Box<dyn std::any::Any>) -> wgpu::Instance {
+        wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL | wgpu::Backends::VULKAN | wgpu::Backends::GL,
             flags: wgpu::InstanceFlags::default(),
             backend_options: wgpu::BackendOptions::default(),
-            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-            display: Some(display),
         })
     }
 
@@ -186,7 +186,7 @@ impl WgpuContext {
         surface: &wgpu::Surface<'_>,
         compositor_gpu: Option<&CompositorGpuHint>,
     ) -> anyhow::Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue, bool)> {
-        let mut adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
+        let mut adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all());
 
         if adapters.is_empty() {
             anyhow::bail!("No GPU adapters found");
@@ -307,7 +307,7 @@ impl WgpuContext {
         }
 
         let (device, queue, dual_source_blending) = Self::create_device(adapter).await?;
-        let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
 
         let test_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -322,7 +322,7 @@ impl WgpuContext {
 
         surface.configure(&device, &test_config);
 
-        let error = error_scope.pop().await;
+        let error = device.pop_error_scope().await;
         if let Some(e) = error {
             anyhow::bail!("surface configuration failed: {e}");
         }

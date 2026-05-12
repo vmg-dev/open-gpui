@@ -15,8 +15,7 @@ mod screen_capture;
 
 mod metal_atlas;
 pub mod metal_renderer;
-
-use metal_renderer as renderer;
+mod renderer;
 
 #[cfg(feature = "font-kit")]
 mod open_type;

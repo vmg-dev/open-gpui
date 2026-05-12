@@ -4,8 +4,8 @@
 #![allow(clippy::collapsible_else_if)] // False positives in platform specific code
 #![allow(unused_mut)] // False positives in platform specific code
 
-extern crate self as gpui;
 extern crate gpui_ce_macros as gpui_macros;
+extern crate self as gpui;
 
 #[macro_use]
 mod action;
@@ -24,6 +24,7 @@ mod executor;
 mod platform_scheduler;
 pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;
+mod gesture_arena;
 mod global;
 mod input;
 mod inspector;
@@ -33,6 +34,7 @@ mod keymap;
 mod local_util;
 mod path_builder;
 mod platform;
+mod pointer_router;
 pub mod prelude;
 /// Profiling utilities for task timing and thread performance tracking.
 pub mod profiler;
@@ -90,6 +92,7 @@ pub use element::*;
 pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
+pub use gesture_arena::*;
 pub use global::*;
 pub use gpui_macros::{
     AppContext, IntoElement, Render, VisualContext, derive_inspector_reflection, register_action,
@@ -104,6 +107,7 @@ pub use keymap::*;
 pub use local_util::{FutureExt, Timeout, command};
 pub use path_builder::*;
 pub use platform::*;
+pub use pointer_router::*;
 pub use profiler::*;
 #[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
 pub use queue::{PriorityQueueReceiver, PriorityQueueSender};

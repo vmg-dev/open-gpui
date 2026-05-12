@@ -10,15 +10,16 @@ use crate::{
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
-    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    PlatformInputHandler, PlatformWindow, Point, PointerDeviceKind, PointerEvent, PointerId,
+    PointerInputEvent, PointerPhase, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad,
+    Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -530,13 +531,16 @@ type FrameCallback = Box<dyn FnOnce(&mut Window, &mut App)>;
 pub(crate) type AnyMouseListener =
     Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>;
 
+pub(crate) type AnyPointerListener =
+    Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>;
+
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
     pub(crate) hitbox_id: Option<HitboxId>,
     pub(crate) style: CursorStyle,
 }
 
-#[derive(Default, Eq, PartialEq)]
+#[derive(Clone, Default, Eq, PartialEq)]
 pub(crate) struct HitTest {
     pub(crate) ids: SmallVec<[HitboxId; 8]>,
     pub(crate) hover_hitbox_count: usize,
@@ -591,6 +595,17 @@ impl HitboxId {
         window.mouse_hit_test.ids.contains(&self)
     }
 
+    /// Checks if the hitbox with this ID is on the dispatch path for this pointer event.
+    pub fn should_handle_pointer(self, event: &PointerEvent, window: &Window) -> bool {
+        if window.captured_pointers.get(&event.pointer) == Some(&self) {
+            return true;
+        }
+        window
+            .pointer_hit_tests
+            .get(&event.pointer)
+            .is_some_and(|hit_test| hit_test.ids.contains(&self))
+    }
+
     fn next(mut self) -> HitboxId {
         HitboxId(self.0.wrapping_add(1))
     }
@@ -640,6 +655,11 @@ impl Hitbox {
     /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`).
     pub fn should_handle_scroll(&self, window: &Window) -> bool {
         self.id.should_handle_scroll(window)
+    }
+
+    /// Checks if the hitbox is on the dispatch path for this pointer event.
+    pub fn should_handle_pointer(&self, event: &PointerEvent, window: &Window) -> bool {
+        self.id.should_handle_pointer(event, window)
     }
 }
 
@@ -750,6 +770,7 @@ pub(crate) struct Frame {
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
     accessed_element_states: Vec<(GlobalElementId, TypeId)>,
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
+    pub(crate) pointer_listeners: Vec<Option<AnyPointerListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) hitboxes: Vec<Hitbox>,
@@ -781,6 +802,7 @@ pub(crate) struct PrepaintStateIndex {
 pub(crate) struct PaintIndex {
     scene_index: usize,
     mouse_listeners_index: usize,
+    pointer_listeners_index: usize,
     input_handlers_index: usize,
     cursor_styles_index: usize,
     accessed_element_states_index: usize,
@@ -796,6 +818,7 @@ impl Frame {
             element_states: FxHashMap::default(),
             accessed_element_states: Vec::new(),
             mouse_listeners: Vec::new(),
+            pointer_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
             hitboxes: Vec::new(),
@@ -821,6 +844,7 @@ impl Frame {
         self.element_states.clear();
         self.accessed_element_states.clear();
         self.mouse_listeners.clear();
+        self.pointer_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
         self.input_handlers.clear();
@@ -903,6 +927,8 @@ impl Frame {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 enum InputModality {
     Mouse,
+    Touch,
+    Pen,
     Keyboard,
 }
 
@@ -945,6 +971,9 @@ pub struct Window {
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     mouse_hit_test: HitTest,
+    pointer_positions: FxHashMap<PointerId, Point<Pixels>>,
+    pointer_hit_tests: FxHashMap<PointerId, HitTest>,
+    captured_pointers: FxHashMap<PointerId, HitboxId>,
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
@@ -1436,6 +1465,9 @@ impl Window {
             default_prevented: true,
             mouse_position,
             mouse_hit_test: HitTest::default(),
+            pointer_positions: FxHashMap::default(),
+            pointer_hit_tests: FxHashMap::default(),
+            captured_pointers: FxHashMap::default(),
             modifiers,
             capslock,
             scale_factor,
@@ -2168,6 +2200,11 @@ impl Window {
         self.mouse_position
     }
 
+    /// The latest known position for the given pointer.
+    pub fn pointer_position(&self, pointer: PointerId) -> Option<Point<Pixels>> {
+        self.pointer_positions.get(&pointer).copied()
+    }
+
     /// Captures the pointer for the given hitbox. While captured, all mouse move and mouse up
     /// events will be routed to listeners that check this hitbox's `is_hovered` status,
     /// regardless of actual hit testing. This enables drag operations that continue
@@ -2186,6 +2223,21 @@ impl Window {
     /// Returns the hitbox that has captured the pointer, if any.
     pub fn captured_hitbox(&self) -> Option<HitboxId> {
         self.captured_hitbox
+    }
+
+    /// Captures a specific pointer for the given hitbox.
+    pub fn capture_pointer_for(&mut self, pointer: PointerId, hitbox_id: HitboxId) {
+        self.captured_pointers.insert(pointer, hitbox_id);
+    }
+
+    /// Releases pointer capture for a specific pointer.
+    pub fn release_pointer_for(&mut self, pointer: PointerId) {
+        self.captured_pointers.remove(&pointer);
+    }
+
+    /// Returns the hitbox that has captured a specific pointer, if any.
+    pub fn captured_pointer_for(&self, pointer: PointerId) -> Option<HitboxId> {
+        self.captured_pointers.get(&pointer).copied()
     }
 
     /// The current state of the keyboard's modifiers
@@ -2629,6 +2681,7 @@ impl Window {
         PaintIndex {
             scene_index: self.next_frame.scene.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
+            pointer_listeners_index: self.next_frame.pointer_listeners.len(),
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
@@ -2653,6 +2706,12 @@ impl Window {
         self.next_frame.mouse_listeners.extend(
             self.rendered_frame.mouse_listeners
                 [range.start.mouse_listeners_index..range.end.mouse_listeners_index]
+                .iter_mut()
+                .map(|listener| listener.take()),
+        );
+        self.next_frame.pointer_listeners.extend(
+            self.rendered_frame.pointer_listeners
+                [range.start.pointer_listeners_index..range.end.pointer_listeners_index]
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
@@ -3677,6 +3736,54 @@ impl Window {
         });
     }
 
+    /// Paint a wgpu texture view into the scene for the next frame at the current z-index.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos",
+        target_os = "ios",
+        target_family = "wasm"
+    ))]
+    pub fn paint_wgpu_texture(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        texture: Arc<::wgpu::TextureView>,
+    ) {
+        self.paint_wgpu_texture_with_alpha_mode(bounds, texture, crate::WgpuTextureAlphaMode::Blend)
+    }
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos",
+        target_os = "ios",
+        target_family = "wasm"
+    ))]
+    /// Paint a wgpu texture with explicit alpha compositing behavior.
+    pub fn paint_wgpu_texture_with_alpha_mode(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        texture: Arc<::wgpu::TextureView>,
+        alpha_mode: crate::WgpuTextureAlphaMode,
+    ) {
+        use crate::PaintWgpuTexture;
+
+        self.invalidator.debug_assert_paint();
+
+        let scale_factor = self.scale_factor();
+        let bounds = bounds.scale(scale_factor);
+        let content_mask = self.content_mask().scale(scale_factor);
+        self.next_frame.scene.insert_primitive(PaintWgpuTexture {
+            order: 0,
+            bounds,
+            content_mask,
+            texture,
+            alpha_mode,
+        });
+    }
+
     /// Removes an image from the sprite atlas.
     pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
         for frame_index in 0..data.frame_count() {
@@ -3914,6 +4021,26 @@ impl Window {
         )));
     }
 
+    /// Register a pointer event listener on the window for the next frame. The type of event
+    /// is determined by the first parameter of the given listener. When the next frame is rendered
+    /// the listener will be cleared.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn on_pointer_event<Event: PointerInputEvent>(
+        &mut self,
+        mut listener: impl FnMut(&Event, DispatchPhase, &mut Window, &mut App) + 'static,
+    ) {
+        self.invalidator.debug_assert_paint();
+
+        self.next_frame.pointer_listeners.push(Some(Box::new(
+            move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
+                if let Some(event) = event.downcast_ref() {
+                    listener(event, phase, window, cx)
+                }
+            },
+        )));
+    }
+
     /// Register a key event listener on this node for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
@@ -4068,6 +4195,13 @@ impl Window {
         self.last_input_modality = match &event {
             PlatformInput::KeyDown(_) => InputModality::Keyboard,
             PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
+            PlatformInput::Pointer(event) => match event.kind {
+                PointerDeviceKind::Touch => InputModality::Touch,
+                PointerDeviceKind::Stylus | PointerDeviceKind::InvertedStylus => InputModality::Pen,
+                PointerDeviceKind::Mouse
+                | PointerDeviceKind::Trackpad
+                | PointerDeviceKind::Unknown => InputModality::Mouse,
+            },
             _ => self.last_input_modality,
         };
         if self.last_input_modality != old_modality {
@@ -4113,6 +4247,20 @@ impl Window {
                 self.mouse_position = scroll_wheel.position;
                 self.modifiers = scroll_wheel.modifiers;
                 PlatformInput::ScrollWheel(scroll_wheel)
+            }
+            PlatformInput::Pointer(pointer) => {
+                self.pointer_positions
+                    .insert(pointer.pointer, pointer.position);
+                self.modifiers = pointer.modifiers;
+                if matches!(
+                    pointer.kind,
+                    PointerDeviceKind::Mouse
+                        | PointerDeviceKind::Trackpad
+                        | PointerDeviceKind::Unknown
+                ) {
+                    self.mouse_position = pointer.position;
+                }
+                PlatformInput::Pointer(pointer)
             }
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             PlatformInput::Pinch(pinch) => {
@@ -4165,7 +4313,9 @@ impl Window {
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
-        if let Some(any_mouse_event) = event.mouse_event() {
+        if let Some(any_pointer_event) = event.pointer_event() {
+            self.dispatch_pointer_event(any_pointer_event, cx);
+        } else if let Some(any_mouse_event) = event.mouse_event() {
             self.dispatch_mouse_event(any_mouse_event, cx);
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
@@ -4236,6 +4386,88 @@ impl Window {
         // Auto-release pointer capture on mouse up
         if event.is::<MouseUpEvent>() && self.captured_hitbox.is_some() {
             self.captured_hitbox = None;
+        }
+    }
+
+    fn dispatch_pointer_event(&mut self, event: &dyn Any, cx: &mut App) {
+        let Some(pointer_event) = event.downcast_ref::<PointerEvent>() else {
+            return;
+        };
+
+        let hit_test = match pointer_event.phase {
+            PointerPhase::Down | PointerPhase::PanZoomStart => {
+                self.rendered_frame.hit_test(pointer_event.position)
+            }
+            PointerPhase::Move
+            | PointerPhase::Up
+            | PointerPhase::Cancel
+            | PointerPhase::PanZoomUpdate
+            | PointerPhase::PanZoomEnd => self
+                .pointer_hit_tests
+                .get(&pointer_event.pointer)
+                .cloned()
+                .unwrap_or_else(|| self.rendered_frame.hit_test(pointer_event.position)),
+            PointerPhase::Added | PointerPhase::Hover | PointerPhase::Removed => {
+                self.rendered_frame.hit_test(pointer_event.position)
+            }
+        };
+
+        if matches!(
+            pointer_event.phase,
+            PointerPhase::Down
+                | PointerPhase::Move
+                | PointerPhase::Up
+                | PointerPhase::Cancel
+                | PointerPhase::Hover
+                | PointerPhase::PanZoomStart
+                | PointerPhase::PanZoomUpdate
+                | PointerPhase::PanZoomEnd
+        ) {
+            self.pointer_hit_tests
+                .insert(pointer_event.pointer, hit_test.clone());
+        }
+
+        if matches!(
+            pointer_event.kind,
+            PointerDeviceKind::Mouse | PointerDeviceKind::Trackpad | PointerDeviceKind::Unknown
+        ) && hit_test != self.mouse_hit_test
+        {
+            self.mouse_hit_test = hit_test;
+            self.reset_cursor_style(cx);
+        }
+
+        let mut pointer_listeners = mem::take(&mut self.rendered_frame.pointer_listeners);
+
+        for listener in &mut pointer_listeners {
+            let listener = listener.as_mut().unwrap();
+            listener(event, DispatchPhase::Capture, self, cx);
+            if !cx.propagate_event {
+                break;
+            }
+        }
+
+        if cx.propagate_event {
+            for listener in pointer_listeners.iter_mut().rev() {
+                let listener = listener.as_mut().unwrap();
+                listener(event, DispatchPhase::Bubble, self, cx);
+                if !cx.propagate_event {
+                    break;
+                }
+            }
+        }
+
+        self.rendered_frame.pointer_listeners = pointer_listeners;
+
+        if matches!(
+            pointer_event.phase,
+            PointerPhase::Up
+                | PointerPhase::Cancel
+                | PointerPhase::Removed
+                | PointerPhase::PanZoomEnd
+        ) {
+            self.pointer_positions.remove(&pointer_event.pointer);
+            self.pointer_hit_tests.remove(&pointer_event.pointer);
+            self.captured_pointers.remove(&pointer_event.pointer);
         }
     }
 
@@ -4942,6 +5174,18 @@ impl Window {
     /// Currently returns None on Mac and Windows.
     pub fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.platform_window.gpu_specs()
+    }
+
+    /// Return the wgpu device and queue backing this window when the platform renderer uses wgpu.
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos",
+        target_os = "ios",
+        target_family = "wasm"
+    ))]
+    pub fn wgpu_device_queue(&self) -> Option<crate::WgpuDeviceQueue> {
+        self.platform_window.wgpu_device_queue()
     }
 
     /// Perform titlebar double-click action.
