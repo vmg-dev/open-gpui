@@ -1122,6 +1122,13 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    pub fn bounds(&mut self) -> Option<Bounds<Pixels>> {
+        self.cx
+            .update(|window, cx| self.handler.bounds(window, cx))
+            .ok()
+            .flatten()
+    }
+
     pub fn set_selected_text_range(&mut self, range_utf16: Range<usize>, reversed: bool) {
         self.cx
             .update(|window, cx| {
@@ -1259,6 +1266,11 @@ pub struct UTF16Selection {
 ///
 /// <https://developer.apple.com/documentation/appkit/nstextinputclient>
 pub trait InputHandler: 'static {
+    /// Get the bounds of the element that owns this input handler.
+    fn bounds(&mut self, _window: &mut Window, _cx: &mut App) -> Option<Bounds<Pixels>> {
+        None
+    }
+
     /// Get the range of the user's currently selected text, if any
     /// Corresponds to [selectedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438242-selectedrange)
     ///
