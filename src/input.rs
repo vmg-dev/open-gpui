@@ -25,6 +25,17 @@ pub trait EntityInputHandler: 'static + Sized {
         cx: &mut Context<Self>,
     ) -> Option<UTF16Selection>;
 
+    /// See [`InputHandler::set_selected_text_range`] for details
+    fn set_selected_text_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        reversed: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let _ = (range_utf16, reversed, window, cx);
+    }
+
     /// See [`InputHandler::marked_text_range`] for details
     fn marked_text_range(
         &self,
@@ -106,6 +117,18 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
         self.view.update(cx, |view, cx| {
             view.selected_text_range(ignore_disabled_input, window, cx)
         })
+    }
+
+    fn set_selected_text_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        reversed: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.view.update(cx, |view, cx| {
+            view.set_selected_text_range(range_utf16, reversed, window, cx);
+        });
     }
 
     fn marked_text_range(&mut self, window: &mut Window, cx: &mut App) -> Option<Range<usize>> {
