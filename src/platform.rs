@@ -16,6 +16,7 @@ pub(crate) mod windows;
     target_os = "freebsd",
     target_os = "macos",
     target_os = "ios",
+    target_os = "android",
     target_family = "wasm"
 ))]
 #[allow(missing_docs)]
@@ -96,6 +97,7 @@ pub use keystroke::*;
     target_os = "freebsd",
     target_os = "macos",
     target_os = "ios",
+    target_os = "android",
     target_family = "wasm"
 ))]
 #[derive(Clone)]
@@ -149,6 +151,12 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
     {
         let _ = headless;
         panic!("gpui::current_platform is not available on iOS; use gpui-mobile's platform")
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let _ = headless;
+        panic!("gpui::current_platform is not available on Android; use gpui-mobile's platform")
     }
 }
 
@@ -661,6 +669,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         target_os = "freebsd",
         target_os = "macos",
         target_os = "ios",
+        target_os = "android",
         target_family = "wasm"
     ))]
     fn wgpu_device_queue(&self) -> Option<WgpuDeviceQueue> {

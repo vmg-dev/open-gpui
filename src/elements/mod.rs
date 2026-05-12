@@ -15,6 +15,7 @@ mod uniform_list;
     target_os = "freebsd",
     target_os = "macos",
     target_os = "ios",
+    target_os = "android",
     target_family = "wasm"
 ))]
 mod wgpu_texture;
@@ -36,6 +37,7 @@ pub use uniform_list::*;
     target_os = "freebsd",
     target_os = "macos",
     target_os = "ios",
+    target_os = "android",
     target_family = "wasm"
 ))]
 pub use wgpu_texture::*;

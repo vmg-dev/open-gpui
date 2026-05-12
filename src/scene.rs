@@ -42,6 +42,7 @@ pub struct Scene {
         target_os = "freebsd",
         target_os = "macos",
         target_os = "ios",
+        target_os = "android",
         target_family = "wasm"
     ))]
     pub wgpu_textures: Vec<PaintWgpuTexture>,
@@ -66,6 +67,7 @@ impl Scene {
             target_os = "freebsd",
             target_os = "macos",
             target_os = "ios",
+            target_os = "android",
             target_family = "wasm"
         ))]
         self.wgpu_textures.clear();
@@ -141,6 +143,7 @@ impl Scene {
                 target_os = "freebsd",
                 target_os = "macos",
                 target_os = "ios",
+                target_os = "android",
                 target_family = "wasm"
             ))]
             Primitive::WgpuTexture(texture) => {
@@ -179,6 +182,7 @@ impl Scene {
             target_os = "freebsd",
             target_os = "macos",
             target_os = "ios",
+            target_os = "android",
             target_family = "wasm"
         ))]
         self.wgpu_textures.sort_by_key(|texture| texture.order);
@@ -214,6 +218,7 @@ impl Scene {
                 target_os = "freebsd",
                 target_os = "macos",
                 target_os = "ios",
+                target_os = "android",
                 target_family = "wasm"
             ))]
             wgpu_textures_start: 0,
@@ -222,6 +227,7 @@ impl Scene {
                 target_os = "freebsd",
                 target_os = "macos",
                 target_os = "ios",
+                target_os = "android",
                 target_family = "wasm"
             ))]
             wgpu_textures_iter: self.wgpu_textures.iter().peekable(),
@@ -252,6 +258,7 @@ pub(crate) enum PrimitiveKind {
         target_os = "freebsd",
         target_os = "macos",
         target_os = "ios",
+        target_os = "android",
         target_family = "wasm"
     ))]
     WgpuTexture,
@@ -279,6 +286,7 @@ pub enum Primitive {
         target_os = "freebsd",
         target_os = "macos",
         target_os = "ios",
+        target_os = "android",
         target_family = "wasm"
     ))]
     WgpuTexture(PaintWgpuTexture),
@@ -301,6 +309,7 @@ impl Primitive {
                 target_os = "freebsd",
                 target_os = "macos",
                 target_os = "ios",
+                target_os = "android",
                 target_family = "wasm"
             ))]
             Primitive::WgpuTexture(texture) => &texture.bounds,
@@ -322,6 +331,7 @@ impl Primitive {
                 target_os = "freebsd",
                 target_os = "macos",
                 target_os = "ios",
+                target_os = "android",
                 target_family = "wasm"
             ))]
             Primitive::WgpuTexture(texture) => &texture.content_mask,
@@ -358,6 +368,7 @@ struct BatchIterator<'a> {
         target_os = "freebsd",
         target_os = "macos",
         target_os = "ios",
+        target_os = "android",
         target_family = "wasm"
     ))]
     wgpu_textures_start: usize,
@@ -366,6 +377,7 @@ struct BatchIterator<'a> {
         target_os = "freebsd",
         target_os = "macos",
         target_os = "ios",
+        target_os = "android",
         target_family = "wasm"
     ))]
     wgpu_textures_iter: Peekable<slice::Iter<'a, PaintWgpuTexture>>,
@@ -407,6 +419,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 target_os = "freebsd",
                 target_os = "macos",
                 target_os = "ios",
+                target_os = "android",
                 target_family = "wasm"
             ))]
             (
@@ -563,6 +576,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 target_os = "freebsd",
                 target_os = "macos",
                 target_os = "ios",
+                target_os = "android",
                 target_family = "wasm"
             ))]
             PrimitiveKind::WgpuTexture => {
@@ -616,6 +630,7 @@ pub enum PrimitiveBatch {
         target_os = "freebsd",
         target_os = "macos",
         target_os = "ios",
+        target_os = "android",
         target_family = "wasm"
     ))]
     WgpuTextures(Range<usize>),
@@ -871,6 +886,7 @@ impl From<PaintSurface> for Primitive {
     target_os = "freebsd",
     target_os = "macos",
     target_os = "ios",
+    target_os = "android",
     target_family = "wasm"
 ))]
 #[derive(Clone, Debug)]
@@ -906,6 +922,7 @@ impl WgpuTextureAlphaMode {
     target_os = "freebsd",
     target_os = "macos",
     target_os = "ios",
+    target_os = "android",
     target_family = "wasm"
 ))]
 impl From<PaintWgpuTexture> for Primitive {
