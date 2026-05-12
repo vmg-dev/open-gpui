@@ -1,9 +1,9 @@
-use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
+use super::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use bytemuck::{Pod, Zeroable};
 use gpui::{
-    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
-    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
-    Underline, get_gamma_correction_ratios,
+    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, PaintWgpuTexture,
+    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
+    SubpixelSprite, Underline, get_gamma_correction_ratios,
 };
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
@@ -73,6 +73,15 @@ pub struct WgpuSurfaceConfig {
     pub transparent: bool,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct WgpuTextureParams {
+    bounds: PodBounds,
+    content_mask: PodBounds,
+    alpha_mode: u32,
+    _padding: [u32; 3],
+}
+
 struct WgpuPipelines {
     quads: wgpu::RenderPipeline,
     shadows: wgpu::RenderPipeline,
@@ -84,6 +93,7 @@ struct WgpuPipelines {
     poly_sprites: wgpu::RenderPipeline,
     #[allow(dead_code)]
     surfaces: wgpu::RenderPipeline,
+    wgpu_textures: wgpu::RenderPipeline,
 }
 
 struct WgpuBindGroupLayouts {
@@ -91,6 +101,7 @@ struct WgpuBindGroupLayouts {
     instances: wgpu::BindGroupLayout,
     instances_with_texture: wgpu::BindGroupLayout,
     surfaces: wgpu::BindGroupLayout,
+    wgpu_textures: wgpu::BindGroupLayout,
 }
 
 /// Shared GPU context reference, used to coordinate device recovery across multiple windows.
@@ -129,6 +140,7 @@ pub struct WgpuRenderer {
     instance_buffer_capacity: u64,
     max_buffer_size: u64,
     storage_buffer_alignment: u64,
+    uniform_buffer_alignment: u64,
     rendering_params: RenderingParameters,
     dual_source_blending: bool,
     adapter_info: wgpu::AdapterInfo,
@@ -175,10 +187,12 @@ impl WgpuRenderer {
         let window_handle = window
             .window_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
+        let display_handle = window
+            .display_handle()
+            .map_err(|e| anyhow::anyhow!("Failed to get display handle: {e}"))?;
 
         let target = wgpu::SurfaceTargetUnsafe::RawHandle {
-            // Fall back to the display handle already provided via InstanceDescriptor::display.
-            raw_display_handle: None,
+            raw_display_handle: display_handle.as_raw(),
             raw_window_handle: window_handle.as_raw(),
         };
 
@@ -370,7 +384,9 @@ impl WgpuRenderer {
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("instance_buffer"),
             size: initial_instance_buffer_capacity,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::UNIFORM
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -424,7 +440,7 @@ impl WgpuRenderer {
 
         let last_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let last_error_clone = Arc::clone(&last_error);
-        device.on_uncaptured_error(Arc::new(move |error| {
+        device.on_uncaptured_error(Box::new(move |error: wgpu::Error| {
             let mut guard = last_error_clone.lock().unwrap();
             *guard = Some(error.to_string());
         }));
@@ -459,6 +475,7 @@ impl WgpuRenderer {
             instance_buffer_capacity: initial_instance_buffer_capacity,
             max_buffer_size,
             storage_buffer_alignment,
+            uniform_buffer_alignment: uniform_alignment,
             rendering_params,
             dual_source_blending,
             adapter_info,
@@ -586,12 +603,46 @@ impl WgpuRenderer {
                 },
             ],
         });
+        let wgpu_textures = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("wgpu_textures_layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(
+                            std::mem::size_of::<WgpuTextureParams>() as u64
+                        ),
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
         WgpuBindGroupLayouts {
             globals,
             instances,
             instances_with_texture,
             surfaces,
+            wgpu_textures,
         }
     }
 
@@ -646,8 +697,8 @@ impl WgpuRenderer {
                                module: &wgpu::ShaderModule| {
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(&format!("{name}_layout")),
-                bind_group_layouts: &[Some(globals_layout), Some(data_layout)],
-                immediate_size: 0,
+                bind_group_layouts: &[globals_layout, data_layout],
+                push_constant_ranges: &[],
             });
 
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -680,7 +731,7 @@ impl WgpuRenderer {
                     mask: !0,
                     alpha_to_coverage_enabled: false,
                 },
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             })
         };
@@ -830,6 +881,17 @@ impl WgpuRenderer {
             &layouts.globals,
             &layouts.surfaces,
             wgpu::PrimitiveTopology::TriangleStrip,
+            &[Some(color_target.clone())],
+            1,
+            &shader_module,
+        );
+        let wgpu_textures = create_pipeline(
+            "wgpu_textures",
+            "vs_wgpu_texture",
+            "fs_wgpu_texture",
+            &layouts.globals,
+            &layouts.wgpu_textures,
+            wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target)],
             1,
             &shader_module,
@@ -845,6 +907,7 @@ impl WgpuRenderer {
             subpixel_sprites,
             poly_sprites,
             surfaces,
+            wgpu_textures,
         }
     }
 
@@ -923,12 +986,7 @@ impl WgpuRenderer {
             let resources = self.resources_mut();
 
             // Wait for any in-flight GPU work to complete before destroying textures
-            if let Err(e) = resources.device.poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            }) {
-                warn!("Failed to poll device during resize: {e:?}");
-            }
+            let _ = resources.device.poll(wgpu::Maintain::Wait);
 
             // Destroy old textures before allocating new ones to avoid GPU memory spikes
             if let Some(ref texture) = resources.path_intermediate_texture {
@@ -1032,6 +1090,14 @@ impl WgpuRenderer {
         }
     }
 
+    pub fn device_queue(&self) -> gpui::WgpuDeviceQueue {
+        let resources = self.resources();
+        gpui::WgpuDeviceQueue {
+            device: Arc::clone(&resources.device),
+            queue: Arc::clone(&resources.queue),
+        }
+    }
+
     pub fn max_texture_size(&self) -> u32 {
         self.max_texture_size
     }
@@ -1054,10 +1120,8 @@ impl WgpuRenderer {
         self.atlas.before_frame();
 
         let frame = match self.resources().surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                // Textures must be destroyed before the surface can be reconfigured.
-                drop(frame);
+            Ok(frame) => frame,
+            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 let surface_config = self.surface_config.clone();
                 let resources = self.resources_mut();
                 resources
@@ -1065,20 +1129,12 @@ impl WgpuRenderer {
                     .configure(&resources.device, &surface_config);
                 return;
             }
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                let surface_config = self.surface_config.clone();
-                let resources = self.resources_mut();
-                resources
-                    .surface
-                    .configure(&resources.device, &surface_config);
+            Err(wgpu::SurfaceError::Timeout) => {
                 return;
             }
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return;
-            }
-            wgpu::CurrentSurfaceTexture::Validation => {
+            Err(wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other) => {
                 *self.last_error.lock().unwrap() =
-                    Some("Surface texture validation error".to_string());
+                    Some("failed to acquire surface texture".to_string());
                 return;
             }
         };
@@ -1157,7 +1213,6 @@ impl WgpuRenderer {
                             load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                             store: wgpu::StoreOp::Store,
                         },
-                        depth_slice: None,
                     })],
                     depth_stencil_attachment: None,
                     ..Default::default()
@@ -1196,7 +1251,6 @@ impl WgpuRenderer {
                                         load: wgpu::LoadOp::Load,
                                         store: wgpu::StoreOp::Store,
                                     },
-                                    depth_slice: None,
                                 })],
                                 depth_stencil_attachment: None,
                                 ..Default::default()
@@ -1243,6 +1297,11 @@ impl WgpuRenderer {
                             // Not implemented for Linux/wgpu
                             true
                         }
+                        PrimitiveBatch::WgpuTextures(range) => self.draw_wgpu_textures(
+                            &scene.wgpu_textures[range],
+                            &mut instance_offset,
+                            &mut pass,
+                        ),
                     };
                     if !ok {
                         overflow = true;
@@ -1382,6 +1441,56 @@ impl WgpuRenderer {
             instance_offset,
             pass,
         )
+    }
+
+    fn draw_wgpu_textures(
+        &self,
+        textures: &[PaintWgpuTexture],
+        instance_offset: &mut u64,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) -> bool {
+        for texture in textures {
+            let params = WgpuTextureParams {
+                bounds: texture.bounds.into(),
+                content_mask: texture.content_mask.bounds.into(),
+                alpha_mode: texture.alpha_mode.as_u32(),
+                _padding: [0; 3],
+            };
+            let Some((offset, size)) =
+                self.write_to_uniform_buffer(instance_offset, bytemuck::bytes_of(&params))
+            else {
+                return false;
+            };
+
+            let resources = self.resources();
+            let bind_group = resources
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("wgpu_texture_bind_group"),
+                    layout: &resources.bind_group_layouts.wgpu_textures,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: self.instance_binding(offset, size),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(texture.texture.as_ref()),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&resources.atlas_sampler),
+                        },
+                    ],
+                });
+
+            pass.set_pipeline(&resources.pipelines.wgpu_textures);
+            pass.set_bind_group(0, &resources.globals_bind_group, &[]);
+            pass.set_bind_group(1, &bind_group, &[]);
+            pass.draw(0..4, 0..1);
+        }
+
+        true
     }
 
     fn draw_instances(
@@ -1567,7 +1676,6 @@ impl WgpuRenderer {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: wgpu::StoreOp::Store,
                     },
-                    depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
                 ..Default::default()
@@ -1589,7 +1697,9 @@ impl WgpuRenderer {
         resources.instance_buffer = resources.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("instance_buffer"),
             size: new_capacity,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::UNIFORM
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         self.instance_buffer_capacity = new_capacity;
@@ -1601,6 +1711,24 @@ impl WgpuRenderer {
         data: &[u8],
     ) -> Option<(u64, NonZeroU64)> {
         let offset = (*instance_offset).next_multiple_of(self.storage_buffer_alignment);
+        let size = (data.len() as u64).max(16);
+        if offset + size > self.instance_buffer_capacity {
+            return None;
+        }
+        let resources = self.resources();
+        resources
+            .queue
+            .write_buffer(&resources.instance_buffer, offset, data);
+        *instance_offset = offset + size;
+        Some((offset, NonZeroU64::new(size).expect("size is at least 16")))
+    }
+
+    fn write_to_uniform_buffer(
+        &self,
+        instance_offset: &mut u64,
+        data: &[u8],
+    ) -> Option<(u64, NonZeroU64)> {
+        let offset = (*instance_offset).next_multiple_of(self.uniform_buffer_alignment);
         let size = (data.len() as u64).max(16);
         if offset + size > self.instance_buffer_capacity {
             return None;
@@ -1655,6 +1783,9 @@ impl WgpuRenderer {
         let window_handle = window
             .window_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
+        let display_handle = window
+            .display_handle()
+            .map_err(|e| anyhow::anyhow!("Failed to get display handle: {e}"))?;
 
         let surface = if needs_new_context {
             log::warn!("GPU device lost, recreating context...");
@@ -1667,14 +1798,15 @@ impl WgpuRenderer {
             std::thread::sleep(std::time::Duration::from_millis(350));
 
             let instance = WgpuContext::instance(Box::new(window.clone()));
-            let surface = create_surface(&instance, window_handle.as_raw())?;
+            let surface =
+                create_surface(&instance, display_handle.as_raw(), window_handle.as_raw())?;
             let new_context = WgpuContext::new(instance, &surface, self.compositor_gpu)?;
             *gpu_context.borrow_mut() = Some(new_context);
             surface
         } else {
             let ctx_ref = gpu_context.borrow();
             let instance = &ctx_ref.as_ref().unwrap().instance;
-            create_surface(instance, window_handle.as_raw())?
+            create_surface(instance, display_handle.as_raw(), window_handle.as_raw())?
         };
 
         let config = WgpuSurfaceConfig {
@@ -1709,13 +1841,13 @@ impl WgpuRenderer {
 #[cfg(not(target_family = "wasm"))]
 fn create_surface(
     instance: &wgpu::Instance,
+    raw_display_handle: raw_window_handle::RawDisplayHandle,
     raw_window_handle: raw_window_handle::RawWindowHandle,
 ) -> anyhow::Result<wgpu::Surface<'static>> {
     unsafe {
         instance
             .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                // Fall back to the display handle already provided via InstanceDescriptor::display.
-                raw_display_handle: None,
+                raw_display_handle,
                 raw_window_handle,
             })
             .map_err(|e| anyhow::anyhow!("{e}"))

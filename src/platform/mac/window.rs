@@ -1551,11 +1551,15 @@ impl PlatformWindow for MacWindow {
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        self.0.lock().renderer.sprite_atlas().clone()
+        self.0.lock().renderer.sprite_atlas()
     }
 
     fn gpu_specs(&self) -> Option<gpui::GpuSpecs> {
-        None
+        self.0.lock().renderer.gpu_specs()
+    }
+
+    fn wgpu_device_queue(&self) -> Option<gpui::WgpuDeviceQueue> {
+        self.0.lock().renderer.wgpu_device_queue()
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
@@ -2197,9 +2201,19 @@ extern "C" fn close_window(this: &Object, _: Sel) {
 }
 
 extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
-    let window_state = unsafe { get_window_state(this) };
-    let window_state = window_state.as_ref().lock();
-    window_state.renderer.layer_ptr() as id
+    unsafe {
+        let raw: *mut c_void = *this.get_ivar(WINDOW_STATE_IVAR);
+        if !raw.is_null() {
+            let window_state = Arc::from_raw(raw as *const Mutex<MacWindowState>);
+            let layer = window_state.lock().renderer.layer_ptr() as id;
+            let _ = Arc::into_raw(window_state);
+            if !layer.is_null() {
+                return layer;
+            }
+        }
+
+        msg_send![super(this, class!(NSView)), makeBackingLayer]
+    }
 }
 
 extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {

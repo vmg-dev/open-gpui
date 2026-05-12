@@ -842,6 +842,7 @@ impl MetalRenderer {
                     viewport_size,
                     command_encoder,
                 ),
+                PrimitiveBatch::WgpuTextures(_) => true,
                 PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
             };
             if !ok {

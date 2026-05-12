@@ -1333,3 +1333,45 @@ fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
 
     return ycbcr_to_RGB * y_cb_cr;
 }
+
+// --- wgpu textures --- //
+
+struct WgpuTextureParams {
+    bounds: Bounds,
+    content_mask: Bounds,
+    alpha_mode: u32,
+}
+
+@group(1) @binding(0) var<uniform> wgpu_texture_locals: WgpuTextureParams;
+@group(1) @binding(1) var t_wgpu_texture: texture_2d<f32>;
+@group(1) @binding(2) var s_wgpu_texture: sampler;
+
+struct WgpuTextureVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) texture_position: vec2<f32>,
+    @location(1) clip_distances: vec4<f32>,
+}
+
+@vertex
+fn vs_wgpu_texture(@builtin(vertex_index) vertex_id: u32) -> WgpuTextureVarying {
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+
+    var out = WgpuTextureVarying();
+    out.position = to_device_position(unit_vertex, wgpu_texture_locals.bounds);
+    out.texture_position = unit_vertex;
+    out.clip_distances = distance_from_clip_rect(unit_vertex, wgpu_texture_locals.bounds, wgpu_texture_locals.content_mask);
+    return out;
+}
+
+@fragment
+fn fs_wgpu_texture(input: WgpuTextureVarying) -> @location(0) vec4<f32> {
+    if (any(input.clip_distances < vec4<f32>(0.0))) {
+        return vec4<f32>(0.0);
+    }
+
+    var color = textureSampleLevel(t_wgpu_texture, s_wgpu_texture, input.texture_position, 0.0);
+    if (wgpu_texture_locals.alpha_mode == 1u) {
+        color = vec4<f32>(color.rgb, 1.0);
+    }
+    return blend_color(color, 1.0);
+}

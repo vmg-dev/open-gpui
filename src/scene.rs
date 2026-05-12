@@ -13,6 +13,7 @@ use std::{
     iter::Peekable,
     ops::{Add, Range, Sub},
     slice,
+    sync::Arc,
 };
 
 #[allow(non_camel_case_types, unused)]
@@ -36,6 +37,14 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos",
+        target_os = "ios",
+        target_family = "wasm"
+    ))]
+    pub wgpu_textures: Vec<PaintWgpuTexture>,
 }
 
 #[expect(missing_docs)]
@@ -52,6 +61,14 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "macos",
+            target_os = "ios",
+            target_family = "wasm"
+        ))]
+        self.wgpu_textures.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -119,6 +136,17 @@ impl Scene {
                 surface.order = order;
                 self.surfaces.push(surface.clone());
             }
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "freebsd",
+                target_os = "macos",
+                target_os = "ios",
+                target_family = "wasm"
+            ))]
+            Primitive::WgpuTexture(texture) => {
+                texture.order = order;
+                self.wgpu_textures.push(texture.clone());
+            }
         }
         self.paint_operations
             .push(PaintOperation::Primitive(primitive));
@@ -146,6 +174,14 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "macos",
+            target_os = "ios",
+            target_family = "wasm"
+        ))]
+        self.wgpu_textures.sort_by_key(|texture| texture.order);
     }
 
     #[cfg_attr(
@@ -173,6 +209,22 @@ impl Scene {
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "freebsd",
+                target_os = "macos",
+                target_os = "ios",
+                target_family = "wasm"
+            ))]
+            wgpu_textures_start: 0,
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "freebsd",
+                target_os = "macos",
+                target_os = "ios",
+                target_family = "wasm"
+            ))]
+            wgpu_textures_iter: self.wgpu_textures.iter().peekable(),
         }
     }
 }
@@ -195,6 +247,14 @@ pub(crate) enum PrimitiveKind {
     SubpixelSprite,
     PolychromeSprite,
     Surface,
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos",
+        target_os = "ios",
+        target_family = "wasm"
+    ))]
+    WgpuTexture,
 }
 
 pub(crate) enum PaintOperation {
@@ -214,6 +274,14 @@ pub enum Primitive {
     SubpixelSprite(SubpixelSprite),
     PolychromeSprite(PolychromeSprite),
     Surface(PaintSurface),
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos",
+        target_os = "ios",
+        target_family = "wasm"
+    ))]
+    WgpuTexture(PaintWgpuTexture),
 }
 
 #[expect(missing_docs)]
@@ -228,6 +296,14 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "freebsd",
+                target_os = "macos",
+                target_os = "ios",
+                target_family = "wasm"
+            ))]
+            Primitive::WgpuTexture(texture) => &texture.bounds,
         }
     }
 
@@ -241,6 +317,14 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "freebsd",
+                target_os = "macos",
+                target_os = "ios",
+                target_family = "wasm"
+            ))]
+            Primitive::WgpuTexture(texture) => &texture.content_mask,
         }
     }
 }
@@ -269,6 +353,22 @@ struct BatchIterator<'a> {
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos",
+        target_os = "ios",
+        target_family = "wasm"
+    ))]
+    wgpu_textures_start: usize,
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos",
+        target_os = "ios",
+        target_family = "wasm"
+    ))]
+    wgpu_textures_iter: Peekable<slice::Iter<'a, PaintWgpuTexture>>,
 }
 
 impl<'a> Iterator for BatchIterator<'a> {
@@ -301,6 +401,17 @@ impl<'a> Iterator for BatchIterator<'a> {
             (
                 self.surfaces_iter.peek().map(|s| s.order),
                 PrimitiveKind::Surface,
+            ),
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "freebsd",
+                target_os = "macos",
+                target_os = "ios",
+                target_family = "wasm"
+            ))]
+            (
+                self.wgpu_textures_iter.peek().map(|texture| texture.order),
+                PrimitiveKind::WgpuTexture,
             ),
         ];
         orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
@@ -447,6 +558,27 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.surfaces_start = surfaces_end;
                 Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
             }
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "freebsd",
+                target_os = "macos",
+                target_os = "ios",
+                target_family = "wasm"
+            ))]
+            PrimitiveKind::WgpuTexture => {
+                let textures_start = self.wgpu_textures_start;
+                let mut textures_end = textures_start + 1;
+                self.wgpu_textures_iter.next();
+                while self
+                    .wgpu_textures_iter
+                    .next_if(|texture| (texture.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    textures_end += 1;
+                }
+                self.wgpu_textures_start = textures_end;
+                Some(PrimitiveBatch::WgpuTextures(textures_start..textures_end))
+            }
         }
     }
 }
@@ -479,6 +611,14 @@ pub enum PrimitiveBatch {
         range: Range<usize>,
     },
     Surfaces(Range<usize>),
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos",
+        target_os = "ios",
+        target_family = "wasm"
+    ))]
+    WgpuTextures(Range<usize>),
 }
 
 #[derive(Default, Debug, Clone)]
@@ -723,6 +863,54 @@ pub struct PaintSurface {
 impl From<PaintSurface> for Primitive {
     fn from(surface: PaintSurface) -> Self {
         Primitive::Surface(surface)
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "macos",
+    target_os = "ios",
+    target_family = "wasm"
+))]
+#[derive(Clone, Debug)]
+#[allow(missing_docs)]
+pub struct PaintWgpuTexture {
+    pub order: DrawOrder,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub texture: Arc<::wgpu::TextureView>,
+    pub alpha_mode: WgpuTextureAlphaMode,
+}
+
+/// How a wgpu texture primitive should composite its alpha channel.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WgpuTextureAlphaMode {
+    /// Use the texture alpha channel while blending.
+    Blend,
+    /// Ignore the texture alpha channel and present the texture as opaque.
+    Opaque,
+}
+
+impl WgpuTextureAlphaMode {
+    pub(crate) fn as_u32(self) -> u32 {
+        match self {
+            Self::Blend => 0,
+            Self::Opaque => 1,
+        }
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "macos",
+    target_os = "ios",
+    target_family = "wasm"
+))]
+impl From<PaintWgpuTexture> for Primitive {
+    fn from(texture: PaintWgpuTexture) -> Self {
+        Primitive::WgpuTexture(texture)
     }
 }
 
